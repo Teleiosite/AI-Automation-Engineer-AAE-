@@ -65,6 +65,30 @@ class Requirement:
             return True
         return any(item.confidence == ConfidenceLevel.UNKNOWN for item in self.items)
 
+    def add_assumption(self, assumption: str) -> None:
+        """Record an explicit or inferred assumption."""
+        self.assumptions.append(assumption)
+
+    def add_ambiguity(self, ambiguity_description: str) -> None:
+        """Record an identified ambiguity or gap."""
+        self.ambiguities.append(ambiguity_description)
+
+    def overall_risk(self) -> RiskLevel:
+        """Calculate highest risk across all extracted requirement items."""
+        risk_hierarchy = {
+            RiskLevel.LOW: 1,
+            RiskLevel.MEDIUM: 2,
+            RiskLevel.HIGH: 3,
+            RiskLevel.CRITICAL: 4,
+        }
+        if not self.items:
+            return RiskLevel.LOW
+        highest_score = max(risk_hierarchy.get(item.risk, 1) for item in self.items)
+        for level, score in risk_hierarchy.items():
+            if score == highest_score:
+                return level
+        return RiskLevel.LOW
+
     def assert_ready_for_specification(self) -> None:
         """Enforces that conflicting or ambiguous requirements cannot proceed without clarification."""
         if self.has_unresolved_conflicts():

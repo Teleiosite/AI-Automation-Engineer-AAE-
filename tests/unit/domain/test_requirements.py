@@ -1,4 +1,4 @@
-﻿"""Unit tests for Requirement domain models and invariants."""
+"""Unit tests for Requirement domain models and invariants."""
 
 import pytest
 from uuid import uuid4

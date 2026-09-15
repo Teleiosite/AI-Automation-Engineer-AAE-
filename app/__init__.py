@@ -1,2 +1,2 @@
-﻿"""AAE Application Package."""
+"""AAE Application Package."""
 __version__ = "0.1.0"

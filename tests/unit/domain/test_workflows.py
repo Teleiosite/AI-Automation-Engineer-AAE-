@@ -1,4 +1,4 @@
-﻿"""Unit tests for Workflow aggregate and WorkflowVersion immutability."""
+"""Unit tests for Workflow aggregate and WorkflowVersion immutability."""
 
 import pytest
 from uuid import uuid4

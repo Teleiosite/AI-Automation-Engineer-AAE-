@@ -1,4 +1,4 @@
-﻿"""Unit tests for logging and secret redaction."""
+"""Unit tests for logging and secret redaction."""
 
 import json
 import logging

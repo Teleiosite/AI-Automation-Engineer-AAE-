@@ -1,4 +1,4 @@
-﻿"""Unit tests for DeploymentAuthorizationPolicy cross-aggregate governance."""
+"""Unit tests for DeploymentAuthorizationPolicy cross-aggregate governance."""
 
 import pytest
 from uuid import uuid4

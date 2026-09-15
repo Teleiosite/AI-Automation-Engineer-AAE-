@@ -1,4 +1,4 @@
-﻿"""Security baseline tests."""
+"""Security baseline tests."""
 
 from fastapi.testclient import TestClient
 from app.core.config import Settings

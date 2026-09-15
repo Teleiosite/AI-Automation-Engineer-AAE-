@@ -1,4 +1,4 @@
-﻿"""AAE FastAPI Application Entry Point."""
+"""AAE FastAPI Application Entry Point."""
 
 import uuid
 from contextlib import asynccontextmanager
@@ -45,6 +45,32 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Security Headers Middleware
+    @app.middleware("http")
+    async def security_headers_middleware(request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+        if settings.environment == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+
+    # Rate Limiting Middleware
+    from app.core.security import RateLimiter
+    api_rate_limiter = RateLimiter(max_requests=120, window_seconds=60.0)
+
+    @app.middleware("http")
+    async def rate_limiting_middleware(request: Request, call_next) -> Response:
+        client_ip = request.client.host if request.client else "unknown"
+        if not api_rate_limiter.is_allowed(client_ip):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Too Many Requests", "message": "Rate limit exceeded. Try again later."},
+            )
+        return await call_next(request)
 
     # Correlation ID Middleware
     @app.middleware("http")

@@ -1,0 +1,47 @@
+services:
+  aae-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: aae-api
+    restart: unless-stopped
+    environment:
+      AAE_ENVIRONMENT: production
+      AAE_DEBUG: "false"
+      AAE_DATABASE_URL: postgresql+psycopg://postgres:postgres_prod_password@postgres:5432/aae
+      AAE_SECRET_KEY: ${AAE_SECRET_KEY:-prod_secure_secret_key_minimum_32_characters_long_for_deployment}
+      AAE_N8N_URL: ${AAE_N8N_URL:-http://localhost:5678}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: aae-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres_prod_password}
+      POSTGRES_DB: aae
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d aae"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

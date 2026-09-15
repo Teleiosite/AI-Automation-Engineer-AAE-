@@ -1,4 +1,4 @@
-﻿"""Provider tests for n8n adapter and execution routing."""
+"""Provider tests for n8n adapter and execution routing."""
 
 from unittest.mock import MagicMock
 import pytest

@@ -1,4 +1,4 @@
-﻿"""Integration tests for health and readiness endpoints."""
+"""Integration tests for health and readiness endpoints."""
 
 from unittest.mock import patch
 from fastapi.testclient import TestClient

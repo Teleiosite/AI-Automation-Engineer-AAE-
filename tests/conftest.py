@@ -1,4 +1,4 @@
-﻿"""Pytest fixtures and test environment setup."""
+"""Pytest fixtures and test environment setup."""
 
 import pytest
 from fastapi.testclient import TestClient

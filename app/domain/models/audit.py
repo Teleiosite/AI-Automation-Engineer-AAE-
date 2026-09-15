@@ -9,7 +9,7 @@ from app.domain.errors import DomainValidationError
 
 def sanitize_audit_metadata(data: Dict[str, Any]) -> Dict[str, Any]:
     """Recursively cleanse metadata of potential secrets before storing in audit events."""
-    sensitive_keys = {"password", "secret", "token", "api_key", "auth", "credential", "private_key"}
+    sensitive_keys = {"password", "secret", "token", "api_key", "apikey", "auth", "credential", "private_key"}
     cleaned = {}
     for k, v in data.items():
         k_lower = str(k).lower()

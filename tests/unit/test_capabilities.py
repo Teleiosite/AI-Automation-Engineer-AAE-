@@ -1,4 +1,4 @@
-﻿"""Unit tests for capability registry and truthfulness."""
+"""Unit tests for capability registry and truthfulness."""
 
 from app.domain.capabilities.models import CapabilityRegistry, CapabilityStatus, get_default_n8n_registry
 

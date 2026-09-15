@@ -1,1 +1,1 @@
-﻿"""AAE Test Suite."""
+"""AAE Test Suite."""

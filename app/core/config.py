@@ -1,8 +1,8 @@
-﻿"""Application configuration management using Pydantic Settings."""
+"""Application configuration management using Pydantic Settings."""
 
 from functools import lru_cache
 from typing import Literal
-from pydantic import Field, SecretStr, field_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -67,6 +67,14 @@ class Settings(BaseSettings):
         if v.lower() not in allowed:
             raise ValueError(f"Invalid environment: {v}. Must be one of {allowed}")
         return v.lower()
+
+    @model_validator(mode="after")
+    def validate_production_hardening(self) -> "Settings":
+        if self.environment == "production":
+            val = self.secret_key.get_secret_value()
+            if "dev_insecure" in val or len(val) < 32:
+                raise ValueError("Production environment requires a secure secret_key of at least 32 characters")
+        return self
 
     def get_database_url_str(self) -> str:
         """Return the unmasked database URL for connection creation."""

@@ -1,4 +1,4 @@
-﻿"""Health and readiness probe endpoints."""
+"""Health and readiness probe endpoints."""
 
 import logging
 from fastapi import APIRouter, Response, status

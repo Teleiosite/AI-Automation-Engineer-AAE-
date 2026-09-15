@@ -101,6 +101,13 @@ class Specification:
         self.status = SpecificationStatus.CLARIFICATION_REQUIRED
         self.updated_at = datetime.now(timezone.utc)
 
+    def submit_for_review(self) -> None:
+        """Transition specification to READY_FOR_REVIEW."""
+        if not self.versions:
+            raise InvariantViolationError("Cannot submit empty specification for review")
+        self.status = SpecificationStatus.READY_FOR_REVIEW
+        self.updated_at = datetime.now(timezone.utc)
+
     def is_construction_authorized(self) -> bool:
         """Rule: Only an APPROVED specification authorizes material workflow construction."""
         return self.status == SpecificationStatus.APPROVED

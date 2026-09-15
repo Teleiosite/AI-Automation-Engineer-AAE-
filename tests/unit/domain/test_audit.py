@@ -1,4 +1,4 @@
-﻿"""Unit tests for AuditEvent and secret sanitization."""
+"""Unit tests for AuditEvent and secret sanitization."""
 
 from uuid import uuid4
 from app.domain.models.audit import AuditEvent, sanitize_audit_metadata

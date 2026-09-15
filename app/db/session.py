@@ -1,4 +1,4 @@
-﻿"""Database session, engine configuration, and connectivity verification."""
+"""Database session, engine configuration, and connectivity verification."""
 
 import logging
 from typing import Generator, Tuple

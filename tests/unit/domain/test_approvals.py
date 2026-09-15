@@ -1,4 +1,4 @@
-﻿"""Unit tests for Approval entity and replay defense."""
+"""Unit tests for Approval entity and replay defense."""
 
 from datetime import datetime, timedelta, timezone
 import pytest

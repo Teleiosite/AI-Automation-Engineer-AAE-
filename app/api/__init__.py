@@ -1,1 +1,1 @@
-﻿"""AAE API Package."""
+"""AAE API Package."""

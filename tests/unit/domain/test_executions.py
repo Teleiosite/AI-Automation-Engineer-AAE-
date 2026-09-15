@@ -1,4 +1,4 @@
-﻿"""Unit tests for Execution aggregate and ExecutionResult distinction."""
+"""Unit tests for Execution aggregate and ExecutionResult distinction."""
 
 from datetime import datetime, timedelta, timezone
 import pytest

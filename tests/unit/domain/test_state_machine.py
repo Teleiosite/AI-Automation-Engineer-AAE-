@@ -1,4 +1,4 @@
-﻿"""Unit tests for the 21-state Agent State Machine."""
+"""Unit tests for the 21-state Agent State Machine."""
 
 import pytest
 from app.domain.enums import AgentState

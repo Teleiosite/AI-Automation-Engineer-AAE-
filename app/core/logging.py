@@ -1,4 +1,4 @@
-﻿"""Structured JSON logging with correlation IDs and automatic secret redaction."""
+"""Structured JSON logging with correlation IDs and automatic secret redaction."""
 
 import json
 import logging
