@@ -210,59 +210,54 @@ class WorkflowPlanner:
             prev_node_id = sanitize_node.node_id
             planned_actions.append("Enforce access control and PII data sanitization for sensitive information")
 
-        # 3.4 Conditional Branching / Routing Actions
-        has_sales_support = "sales" in source_req_text and "support" in source_req_text
-        has_payment_status = ("invoice" in source_req_text or "payment" in source_req_text) and ("failed" in source_req_text or "fails" in source_req_text)
+        # 3.4 Specification-Driven Topology Planning
+        has_routing_action = any("routing" in a.get("description", "").lower() or "conditional" in a.get("description", "").lower() for a in content.get("actions", []))
+        has_financial_action = any("financial" in a.get("description", "").lower() or "invoice" in a.get("description", "").lower() or "payment" in a.get("description", "").lower() for a in content.get("actions", []))
+        has_retry_failure = any("retry" in f.lower() for f in content.get("failure_handling", [])) or any("retry" in a.get("description", "").lower() for a in content.get("actions", []))
 
-        if has_sales_support:
-            route_node = PlannedNode(
-                node_id=f"node_router_{len(nodes)}",
-                name="Route Sales vs Support",
-                node_type="n8n-nodes-base.if",
+        # 3.5 Data transformation / Code validation actions
+        has_transform_action = any(
+            any(k in a.get("description", "").lower() for k in ["validate", "format", "code", "transform", "enrich", "assign"])
+            for a in content.get("actions", [])
+        )
+        if has_transform_action and not has_dedup:
+            node_id = f"node_code_{len(nodes)}"
+            code_node = PlannedNode(
+                node_id=node_id,
+                name="Validate & Format (Code)",
+                node_type="n8n-nodes-base.code",
                 type_version=2.0,
                 parameters={
-                    "conditions": {
-                        "string": [{"value1": "={{ $json.enquiry_type || $json.body?.enquiry_type || 'sales' }}", "operation": "equal", "value2": "sales"}]
-                    }
+                    "mode": "runOnceForEachItem",
+                    "jsCode": "const item = $json.body || $json;\nreturn {\n  ...item,\n  qualified: Boolean(item.email || item.name),\n  processedAt: new Date().toISOString()\n};",
                 },
             )
-            nodes.append(route_node)
-            connections.append(PlannedConnection(source_node=prev_node_id, target_node=route_node.node_id))
+            nodes.append(code_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
+            prev_node_id = node_id
+            planned_actions.append("Validate and format lead payload via JavaScript Code node")
 
-            sales_node = PlannedNode(
-                node_id=f"node_sales_{len(nodes)}",
-                name="Notify Sales Team",
-                node_type="n8n-nodes-base.emailSend",
-                type_version=2.1,
-                parameters={
-                    "fromEmail": "notifications@example.com",
-                    "toEmail": "sales@example.com",
-                    "subject": "New Qualified Sales Lead",
-                    "text": "A serious sales prospect enquiry has been received.",
-                },
-            )
-            nodes.append(sales_node)
-            connections.append(PlannedConnection(source_node=route_node.node_id, target_node=sales_node.node_id, source_output_index=0))
-
-            support_node = PlannedNode(
-                node_id=f"node_support_{len(nodes)}",
-                name="Notify Support Team",
-                node_type="n8n-nodes-base.emailSend",
-                type_version=2.1,
-                parameters={
-                    "fromEmail": "notifications@example.com",
-                    "toEmail": "support@example.com",
-                    "subject": "New Support Enquiry",
-                    "text": "A general question enquiry has been received.",
-                },
-            )
-            nodes.append(support_node)
-            connections.append(PlannedConnection(source_node=route_node.node_id, target_node=support_node.node_id, source_output_index=1))
-            prev_node_id = sales_node.node_id
-            planned_actions.append("Conditional evaluation and routing branch")
-            planned_actions.append("Dispatch outbound notification/message")
-
-        elif has_payment_status:
+        # 3.6 Data Store & State Inspection / Persistence
+        if content.get("data_stores"):
+            for i, ds in enumerate(content.get("data_stores")):
+                ds_name = ds.get("name", "") if isinstance(ds, dict) else str(ds)
+                node_id = f"node_postgres_{i+1}"
+                table_name = "invoices" if "invoice" in ds_name.lower() else ("appointments" if "appointment" in ds_name.lower() else "records")
+                op = "update" if has_financial_action and "status" in trigger_desc else "insert"
+                ds_node = PlannedNode(
+                    node_id=node_id,
+                    name=f"PostgreSQL {ds_name}",
+                    node_type="n8n-nodes-base.postgres",
+                    type_version=2.5,
+                    parameters={"operation": op, "table": table_name},
+                    retry_on_fail=True,
+                    max_retries=3,
+                )
+                nodes.append(ds_node)
+                connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
+                prev_node_id = node_id
+                planned_actions.append(f"Persist record to {ds_name}")
+        elif has_financial_action and ("status" in trigger_desc or "invoice" in source_req_text):
             upd_node = PlannedNode(
                 node_id=f"node_pg_{len(nodes)}",
                 name="Update Customer Invoice Record",
@@ -274,139 +269,133 @@ class WorkflowPlanner:
             )
             nodes.append(upd_node)
             connections.append(PlannedConnection(source_node=prev_node_id, target_node=upd_node.node_id))
+            prev_node_id = upd_node.node_id
+            planned_actions.append("Update customer invoice record")
+        elif any("persist" in a.get("description", "").lower() or "store" in a.get("description", "").lower() or "query state" in a.get("description", "").lower() or "inspect record" in a.get("description", "").lower() for a in content.get("actions", [])):
+            ds_node = PlannedNode(
+                node_id=f"node_pg_{len(nodes)}",
+                name="PostgreSQL Customer Records",
+                node_type="n8n-nodes-base.postgres",
+                type_version=2.5,
+                parameters={"operation": "insert", "table": "records"},
+                retry_on_fail=True,
+                max_retries=3,
+            )
+            nodes.append(ds_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=ds_node.node_id))
+            prev_node_id = ds_node.node_id
+            planned_actions.append("Persist incoming record to data store")
 
-            if_fail_node = PlannedNode(
-                node_id=f"node_if_failed_{len(nodes)}",
-                name="If Payment Failed",
+        # 3.7 Conditional Routing & Branching
+        if has_routing_action and not any(n.node_type == "n8n-nodes-base.if" for n in nodes):
+            route_node = PlannedNode(
+                node_id=f"node_router_{len(nodes)}",
+                name="Route Sales vs Support" if "sales" in source_req_text else "Evaluate Condition & Route",
                 node_type="n8n-nodes-base.if",
                 type_version=2.0,
                 parameters={
                     "conditions": {
-                        "string": [{"value1": "={{ $json.status || $json.body?.status }}", "operation": "equal", "value2": "failed"}]
+                        "string": [{"value1": "={{ $json.enquiry_type || $json.body?.enquiry_type || $json.status || 'sales' }}", "operation": "equal", "value2": "sales"}]
                     }
                 },
             )
-            nodes.append(if_fail_node)
-            connections.append(PlannedConnection(source_node=upd_node.node_id, target_node=if_fail_node.node_id))
+            nodes.append(route_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=route_node.node_id))
 
-            finance_alert_node = PlannedNode(
-                node_id=f"node_finance_{len(nodes)}",
-                name="Alert Finance Team",
-                node_type="n8n-nodes-base.emailSend",
-                type_version=2.1,
-                parameters={
-                    "fromEmail": "billing@example.com",
-                    "toEmail": "finance@example.com",
-                    "subject": "URGENT: Payment Failed",
-                    "text": "Invoice payment has failed. Immediate action required.",
-                },
-            )
-            nodes.append(finance_alert_node)
-            connections.append(PlannedConnection(source_node=if_fail_node.node_id, target_node=finance_alert_node.node_id, source_output_index=0))
-            prev_node_id = finance_alert_node.node_id
-            planned_actions.append("Process financial transactions or invoice data")
-            planned_actions.append("Persist incoming record to data store")
-            planned_actions.append("Conditional evaluation and routing branch")
-            planned_actions.append("Dispatch outbound notification/message")
-
-        # 3.5 External API Call with Retry / Resilience
-        elif any(kw in source_req_text for kw in ["external service doesn't respond", "try again a few times", "let us know if it still fails"]):
-            ext_call_node = PlannedNode(
-                node_id=f"node_ext_{len(nodes)}",
-                name="Call External Service API",
-                node_type="n8n-nodes-base.httpRequest",
-                type_version=4.2,
-                parameters={"method": "POST", "url": "https://api.external.com/v1/sync"},
-                retry_on_fail=True,
-                max_retries=3,
-            )
-            nodes.append(ext_call_node)
-            connections.append(PlannedConnection(source_node=prev_node_id, target_node=ext_call_node.node_id))
-
-            alert_fail_node = PlannedNode(
-                node_id=f"node_alert_{len(nodes)}",
-                name="Alert Team on Service Failure",
-                node_type="n8n-nodes-base.emailSend",
-                type_version=2.1,
-                parameters={
-                    "fromEmail": "alerts@example.com",
-                    "toEmail": "oncall@example.com",
-                    "subject": "External Service Call Failed After Retries",
-                    "text": "The external service failed to respond after maximum retries.",
-                },
-            )
-            nodes.append(alert_fail_node)
-            connections.append(PlannedConnection(source_node=ext_call_node.node_id, target_node=alert_fail_node.node_id))
-            prev_node_id = alert_fail_node.node_id
-            planned_actions.append("Call external service with bounded retry policy")
-            planned_actions.append("Dispatch outbound notification/message")
-
-        # 3.6 Appointment Booking & Reminder Scheduling
-        elif any(kw in source_req_text for kw in ["books an appointment", "reminder before the appointment", "appointment"]):
-            rec_node = PlannedNode(
-                node_id=f"node_rec_{len(nodes)}",
-                name="Record Appointment Details",
-                node_type="n8n-nodes-base.postgres",
-                type_version=2.5,
-                parameters={"operation": "insert", "table": "appointments"},
-                retry_on_fail=True,
-                max_retries=3,
-            )
-            nodes.append(rec_node)
-            connections.append(PlannedConnection(source_node=prev_node_id, target_node=rec_node.node_id))
-
-            rem_node = PlannedNode(
-                node_id=f"node_rem_{len(nodes)}",
-                name="Schedule Appointment Reminder",
-                node_type="n8n-nodes-base.emailSend",
-                type_version=2.1,
-                parameters={
-                    "fromEmail": "appointments@example.com",
-                    "toEmail": "={{ $json.body?.customer_email || $json.customer_email || 'client@example.com' }}",
-                    "subject": "Appointment Reminder",
-                    "text": "Reminder: Your appointment is scheduled.",
-                },
-            )
-            nodes.append(rem_node)
-            connections.append(PlannedConnection(source_node=rec_node.node_id, target_node=rem_node.node_id))
-            prev_node_id = rem_node.node_id
-            planned_actions.append("Persist incoming record to data store")
-            planned_actions.append("Dispatch outbound notification/message")
-
-        else:
-            # 3.7 Standard Data store actions
-            for i, ds in enumerate(content.get("data_stores", [])):
-                ds_name = ds.get("name", "")
-                node_id = f"node_postgres_{i+1}"
-                ds_node = PlannedNode(
-                    node_id=node_id,
-                    name=f"PostgreSQL {ds_name}",
-                    node_type="n8n-nodes-base.postgres",
-                    type_version=2.5,
-                    parameters={"operation": "insert", "table": "leads"},
+            # Branch 0 (Primary / True route)
+            if external_services:
+                es0 = external_services[0]
+                es0_name = es0.get("name", "Primary Service") if isinstance(es0, dict) else str(es0)
+                is_email0 = any(k in es0_name.lower() for k in ["email", "smtp", "channel", "notification", "team", "sales", "finance", "support"]) and not any(k in es0_name.lower() for k in ["endpoint", "api", "3pl", "gateway"])
+                node_0 = PlannedNode(
+                    node_id=f"node_branch_0_{len(nodes)}",
+                    name=f"Notify ({es0_name})" if is_email0 else f"Call ({es0_name})",
+                    node_type="n8n-nodes-base.emailSend" if is_email0 else "n8n-nodes-base.httpRequest",
+                    type_version=2.1 if is_email0 else 4.2,
+                    parameters={
+                        "fromEmail": "notifications@example.com",
+                        "toEmail": "sales@example.com" if "sales" in es0_name.lower() else ("finance@example.com" if "finance" in es0_name.lower() else "team@example.com"),
+                        "subject": f"Routing: {es0_name}",
+                        "text": "Condition matched primary branch.",
+                    } if is_email0 else {"method": "POST", "url": "https://api.external.com/primary"},
                     retry_on_fail=True,
                     max_retries=3,
                 )
-                nodes.append(ds_node)
-                connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
-                prev_node_id = node_id
-                planned_actions.append(f"Persist record to {ds_name}")
+            else:
+                node_0 = PlannedNode(
+                    node_id=f"node_branch_0_{len(nodes)}",
+                    name="Notify Primary Team",
+                    node_type="n8n-nodes-base.emailSend",
+                    type_version=2.1,
+                    parameters={
+                        "fromEmail": "notifications@example.com",
+                        "toEmail": "team@example.com",
+                        "subject": "Primary Condition Alert",
+                        "text": "Condition matched primary branch.",
+                    },
+                    retry_on_fail=True,
+                    max_retries=3,
+                )
+            nodes.append(node_0)
+            connections.append(PlannedConnection(source_node=route_node.node_id, target_node=node_0.node_id, source_output_index=0))
 
-            # 3.8 Standard External service communications
-            for j, es in enumerate(content.get("external_services", [])):
-                es_name = es.get("name", "")
+            # Branch 1 (Secondary / False route)
+            if len(external_services) >= 2:
+                es1 = external_services[1]
+                es1_name = es1.get("name", "Secondary Service") if isinstance(es1, dict) else str(es1)
+                is_email1 = any(k in es1_name.lower() for k in ["email", "smtp", "channel", "notification", "team", "support", "pool"]) and not any(k in es1_name.lower() for k in ["endpoint", "api", "3pl", "gateway"])
+                node_1 = PlannedNode(
+                    node_id=f"node_branch_1_{len(nodes)}",
+                    name=f"Notify ({es1_name})" if is_email1 else f"Call ({es1_name})",
+                    node_type="n8n-nodes-base.emailSend" if is_email1 else "n8n-nodes-base.httpRequest",
+                    type_version=2.1 if is_email1 else 4.2,
+                    parameters={
+                        "fromEmail": "notifications@example.com",
+                        "toEmail": "support@example.com" if "support" in es1_name.lower() else "team@example.com",
+                        "subject": f"Routing: {es1_name}",
+                        "text": "Condition matched secondary branch.",
+                    } if is_email1 else {"method": "POST", "url": "https://api.external.com/secondary"},
+                    retry_on_fail=True,
+                    max_retries=3,
+                )
+            else:
+                node_1 = PlannedNode(
+                    node_id=f"node_branch_1_{len(nodes)}",
+                    name="Notify Support Team",
+                    node_type="n8n-nodes-base.emailSend",
+                    type_version=2.1,
+                    parameters={
+                        "fromEmail": "notifications@example.com",
+                        "toEmail": "support@example.com",
+                        "subject": "Secondary Condition Notice",
+                        "text": "Condition matched fallback branch.",
+                    },
+                    retry_on_fail=True,
+                    max_retries=3,
+                )
+            nodes.append(node_1)
+            connections.append(PlannedConnection(source_node=route_node.node_id, target_node=node_1.node_id, source_output_index=1))
+            prev_node_id = node_0.node_id
+            planned_actions.append("Conditional evaluation and routing branch")
+            planned_actions.append("Dispatch outbound notification/message")
+
+        elif not has_routing_action or not any(n.node_type == "n8n-nodes-base.if" for n in nodes):
+            # Sequential external service dispatch
+            for j, es in enumerate(external_services):
+                es_name = es.get("name", "") if isinstance(es, dict) else str(es)
                 node_id = f"node_ext_service_{j+1}"
-                if any(k in es_name.lower() for k in ["email", "smtp", "channel", "notification", "team"]):
+                is_email = any(k in es_name.lower() for k in ["email", "smtp", "channel", "notification", "team", "reminder", "sales", "support", "finance"]) and not any(k in es_name.lower() for k in ["endpoint", "api", "3pl", "gateway"])
+                if is_email:
                     es_node = PlannedNode(
                         node_id=node_id,
-                        name=f"Send Email ({es_name})",
+                        name=f"Send Notification ({es_name})",
                         node_type="n8n-nodes-base.emailSend",
                         type_version=2.1,
                         parameters={
-                            "fromEmail": "leads@example.com",
-                            "toEmail": "={{ $json.body?.email || $json.email || 'lead@example.com' }}",
-                            "subject": "Notification Received",
-                            "text": "Automation notification.",
+                            "fromEmail": "notifications@example.com",
+                            "toEmail": "={{ $json.body?.email || $json.email || 'recipient@example.com' }}",
+                            "subject": f"Notification: {es_name}",
+                            "text": "Automation notification received.",
                         },
                         retry_on_fail=True,
                         max_retries=3,
@@ -426,71 +415,18 @@ class WorkflowPlanner:
                 prev_node_id = node_id
                 planned_actions.append(f"Dispatch outbound message via {es_name}")
 
-        # 3.9 Data transformation / Code validation actions
-        if any(kw in source_req_text for kw in ["code", "validate", "transform", "javascript", "script"]):
-            node_id = f"node_code_{len(nodes)}"
-            code_node = PlannedNode(
-                node_id=node_id,
-                name="Validate & Format (Code)",
-                node_type="n8n-nodes-base.code",
-                type_version=2.0,
-                parameters={
-                    "mode": "runOnceForEachItem",
-                    "jsCode": "const item = $json.body || $json;\nreturn {\n  ...item,\n  qualified: Boolean(item.email || item.name),\n  processedAt: new Date().toISOString()\n};",
-                },
-            )
-            nodes.append(code_node)
-            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
-            prev_node_id = node_id
-            planned_actions.append("Validate and format lead payload via JavaScript Code node")
-
-        # 3.10 Respond to Webhook action
-        if needs_response_node:
-            node_id = f"node_respond_{len(nodes)}"
-            respond_node = PlannedNode(
-                node_id=node_id,
-                name="Respond to Webhook",
-                node_type="n8n-nodes-base.respondToWebhook",
-                type_version=1.1,
-                parameters={
-                    "respondWith": "json",
-                    "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Lead received and validated successfully\",\n  \"data\": $json\n}",
-                },
-            )
-            nodes.append(respond_node)
-            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
-            prev_node_id = node_id
-            planned_actions.append("Respond to incoming webhook with confirmation JSON")
-
-        # 3.11 Fallback persistence and notification if requested in actions
-        if not any(n.node_type == "n8n-nodes-base.postgres" for n in nodes):
-            if any(kw in source_req_text for kw in ["save their details", "save details", "customer records", "customer record", "record it"]):
-                node_id = f"node_pg_{len(nodes)}"
-                ds_node = PlannedNode(
-                    node_id=node_id,
-                    name="PostgreSQL Customer Records",
-                    node_type="n8n-nodes-base.postgres",
-                    type_version=2.5,
-                    parameters={"operation": "insert", "table": "records"},
-                    retry_on_fail=True,
-                    max_retries=3,
-                )
-                nodes.append(ds_node)
-                connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
-                prev_node_id = node_id
-                planned_actions.append("Persist incoming record to data store")
-
+        # 3.8 Outbound notification fallback
         if not any(n.node_type in ("n8n-nodes-base.emailSend", "n8n-nodes-base.httpRequest") for n in nodes if n.node_id != trigger_node.node_id):
-            if any(kw in source_req_text for kw in ["notify", "alert", "let us know", "team knows", "message"]):
+            if any(any(k in a.get("description", "").lower() for k in ["dispatch", "notify", "outbound", "send", "alert", "push", "page", "ping"]) for a in content.get("actions", [])):
                 node_id = f"node_email_{len(nodes)}"
                 es_node = PlannedNode(
                     node_id=node_id,
-                    name="Team Notification Email",
+                    name="Notification Email",
                     node_type="n8n-nodes-base.emailSend",
                     type_version=2.1,
                     parameters={
                         "fromEmail": "notifications@example.com",
-                        "toEmail": "team@example.com",
+                        "toEmail": "={{ $json.body?.email || $json.email || 'team@example.com' }}",
                         "subject": "Automation Notification",
                         "text": "New incoming automation event received.",
                     },
@@ -501,6 +437,24 @@ class WorkflowPlanner:
                 connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
                 prev_node_id = node_id
                 planned_actions.append("Dispatch outbound notification/message")
+
+        # 3.9 Respond to Webhook action
+        if needs_response_node:
+            node_id = f"node_respond_{len(nodes)}"
+            respond_node = PlannedNode(
+                node_id=node_id,
+                name="Respond to Webhook",
+                node_type="n8n-nodes-base.respondToWebhook",
+                type_version=1.1,
+                parameters={
+                    "respondWith": "json",
+                    "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Event received and validated successfully\",\n  \"data\": $json\n}",
+                },
+            )
+            nodes.append(respond_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
+            prev_node_id = node_id
+            planned_actions.append("Respond to incoming webhook with confirmation JSON")
 
         # Reconcile planned_actions with specified actions to guarantee zero drift
         for act in content.get("actions", []):

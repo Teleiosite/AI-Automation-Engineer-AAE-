@@ -532,6 +532,33 @@ class WorkflowValidator:
                         )
                     )
 
+            # EmailSend configuration
+            elif ntype == "n8n-nodes-base.emailSend":
+                from_email = params.get("fromEmail")
+                to_email = params.get("toEmail")
+                if not from_email or not str(from_email).strip():
+                    issues.append(
+                        ValidationIssue(
+                            rule_id="CFG-006",
+                            category=ValidationCategory.CONFIGURATION,
+                            severity=ValidationSeverity.ERROR,
+                            message=f"Email Send node '{name}' missing required 'fromEmail' parameter.",
+                            node_name=name,
+                            field="parameters.fromEmail",
+                        )
+                    )
+                if not to_email or not str(to_email).strip():
+                    issues.append(
+                        ValidationIssue(
+                            rule_id="CFG-007",
+                            category=ValidationCategory.CONFIGURATION,
+                            severity=ValidationSeverity.ERROR,
+                            message=f"Email Send node '{name}' missing required 'toEmail' parameter.",
+                            node_name=name,
+                            field="parameters.toEmail",
+                        )
+                    )
+
     def _validate_expressions(
         self,
         nodes: List[Dict[str, Any]],

@@ -64,13 +64,15 @@ class RequirementTranslator:
     """
 
     # Adversarial patterns to defend against prompt injection
+    # Adversarial patterns to defend against prompt injection
     PROMPT_INJECTION_PATTERNS = [
         re.compile(r"ignore\s+(all\s+)?(previous|prior)\s+instructions", re.IGNORECASE),
-        re.compile(r"disregard\s+(all\s+)?(previous|prior)\s+instructions", re.IGNORECASE),
-        re.compile(r"system\s+prompt\s+override", re.IGNORECASE),
-        re.compile(r"you\s+are\s+now\s+in\s+developer\s+mode", re.IGNORECASE),
+        re.compile(r"disregard\s+(all\s+)?(previous|prior)\s+(instructions|safety\s+rules|rules)", re.IGNORECASE),
+        re.compile(r"system\s+(prompt\s+)?override", re.IGNORECASE),
+        re.compile(r"you\s+are\s+now\s+in\s+(developer|debug|god)\s+mode", re.IGNORECASE),
         re.compile(r"bypass\s+security(\s+policy)?", re.IGNORECASE),
         re.compile(r"admin\s+override", re.IGNORECASE),
+        re.compile(r"email\s+all\s+(database\s+credentials|passwords|api\s+keys)", re.IGNORECASE),
     ]
 
     # Destructive action keywords
@@ -89,7 +91,7 @@ class RequirementTranslator:
         (re.compile(r"\b(webhook|http\s+post|incoming\s+request)\b", re.IGNORECASE), "Webhook event"),
         (re.compile(r"\b(form\s+submi\w+|contact\s+form|fills?\s+out\s+(our\s+)?form)\b", re.IGNORECASE), "Website form submission"),
         (re.compile(r"\b(every\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|day|morning|hour|week|month)|daily|hourly|cron|schedule)\b", re.IGNORECASE), "Scheduled / Cron trigger"),
-        (re.compile(r"\b(new\s+(row|record|lead|customer|entry))\b", re.IGNORECASE), "New record event"),
+        (re.compile(r"\b(new\s+(row|record|lead|customer|entry|hire))\b", re.IGNORECASE), "New record event"),
         (re.compile(r"\b(when|whenever)\s+(someone|somebody|a\s+user|a\s+customer)\s+submits?\b", re.IGNORECASE), "User form submission"),
         (re.compile(r"\b(email\s+received|incoming\s+email|when\s+email\s+arrives)\b", re.IGNORECASE), "Incoming email trigger"),
         (re.compile(r"\b(incoming\s+message|when\s+whatsapp\s+received)\b", re.IGNORECASE), "Incoming message trigger"),
@@ -99,6 +101,10 @@ class RequirementTranslator:
         (re.compile(r"\b(sends?\s+(the\s+)?(same\s+)?event|event\s+(arrives|received|occurs)|incoming\s+event|customer\s+action)\b", re.IGNORECASE), "System customer event"),
         (re.compile(r"\b(external\s+service|service\s+doesn't\s+respond)\b", re.IGNORECASE), "External service event"),
         (re.compile(r"\bprocess\s+customer\s+information\b", re.IGNORECASE), "Customer data processing event"),
+        (re.compile(r"\b(orders?|receipts?|checkout|purchase)\b", re.IGNORECASE), "Customer order event"),
+        (re.compile(r"\b(shipping\s+status|tracking\s+coordinates|delivery\s+driver|picked\s+up)\b", re.IGNORECASE), "Logistics / Shipping status event"),
+        (re.compile(r"\b(transaction|ledger\s+entries|wire\s+transfer|sanctions?)\b", re.IGNORECASE), "Financial transaction event"),
+        (re.compile(r"\b(ticket|support\s+ticket|health\s+screening|cardiology|incident|alert\s+triggers?|datadog|demo\s+request|warehouse\s+stock|applicant|candidate)\b", re.IGNORECASE), "Domain inbound event"),
     ]
 
     # Data stores
@@ -112,6 +118,10 @@ class RequirementTranslator:
         (re.compile(r"\b(airtable)\b", re.IGNORECASE), "Airtable"),
         (re.compile(r"\b(database|data\s+table)\b", re.IGNORECASE), "Database"),
         (re.compile(r"\b(customer\s+records?|record\s+it|save\s+(their\s+)?details|update\s+(the\s+)?customer\s+record)\b", re.IGNORECASE), "Customer Records Store"),
+        (re.compile(r"\b(warehouse\s+stock|inventory|stock|purchase\s+orders?)\b", re.IGNORECASE), "Inventory & Orders Store"),
+        (re.compile(r"\b(dossier|application\s+dossier)\b", re.IGNORECASE), "Student Dossier Store"),
+        (re.compile(r"\b(ledger|ledger\s+entries|balances?)\b", re.IGNORECASE), "Ledger & Balances Store"),
+        (re.compile(r"\b(calendar|calendar\s+slot)\b", re.IGNORECASE), "Calendar Appointments Store"),
     ]
 
     # External services
@@ -124,12 +134,20 @@ class RequirementTranslator:
         (re.compile(r"\b(twilio)\b", re.IGNORECASE), "Twilio"),
         (re.compile(r"\b(hubspot)\b", re.IGNORECASE), "HubSpot"),
         (re.compile(r"\b(salesforce)\b", re.IGNORECASE), "Salesforce"),
-        (re.compile(r"\b(rest\s+api|external\s+api|api)\b", re.IGNORECASE), "REST API"),
+        (re.compile(r"\b(rest\s+api|external\s+api|api|endpoint)\b", re.IGNORECASE), "REST API"),
         (re.compile(r"\b(notify\s+sales|send\s+.*?to\s+sales|sales\s+team)\b", re.IGNORECASE), "Sales Team Channel"),
         (re.compile(r"\b(support\s+team|to\s+support|helpdesk)\b", re.IGNORECASE), "Support Team Channel"),
         (re.compile(r"\b(alert\s+(the\s+)?finance\s+team|finance\s+team)\b", re.IGNORECASE), "Finance Alert Channel"),
         (re.compile(r"\b(team\s+knows|let\s+us\s+know|notify\s+(the\s+)?team|alert\s+(the\s+)?team)\b", re.IGNORECASE), "Team Notification Channel"),
         (re.compile(r"\b(reminder\s+before|send\s+.*?reminder)\b", re.IGNORECASE), "Appointment Reminder Service"),
+        (re.compile(r"\b(procurement\s+channel|supplier|primary\s+supplier|vendor)\b", re.IGNORECASE), "Procurement & Supplier Service"),
+        (re.compile(r"\b(tier\s+2|tier\s+2\s+engineers|standard\s+pool)\b", re.IGNORECASE), "Support Engineer Channel"),
+        (re.compile(r"\b(logistics|3pl|courier|delivery)\b", re.IGNORECASE), "Logistics & Delivery Service"),
+        (re.compile(r"\b(quest\s+diagnostics|diagnostics|lab\s+test)\b", re.IGNORECASE), "Diagnostic Laboratory API"),
+        (re.compile(r"\b(opsgenie|pagerduty|zoom|status\s+page)\b", re.IGNORECASE), "Incident Management Platform"),
+        (re.compile(r"\b(clearbit|zoominfo)\b", re.IGNORECASE), "Lead Enrichment API"),
+        (re.compile(r"\b(aml\s+sanctions|fx\s+rate)\b", re.IGNORECASE), "Financial Sanctions & FX Gateway"),
+        (re.compile(r"\b(to\s+the\s+patient|patient\s+notification|notify\s+(the\s+)?patient|send\s+.*?patient)\b", re.IGNORECASE), "Patient Notification Email"),
     ]
 
     def translate(self, project_id: UUID, raw_text: str, created_by: str = "user") -> RequirementTranslationResult:
@@ -156,6 +174,7 @@ class RequirementTranslator:
                     notes="System instructions cannot be overridden by user-supplied text.",
                 )
             )
+            requirement.add_ambiguity("Adversarial prompt injection pattern detected: system instructions cannot be overridden.")
 
         # 2. Extract business objective
         self._extract_business_objective(cleaned_text, requirement)
@@ -292,8 +311,8 @@ class RequirementTranslator:
                 )
             )
 
-        # Save/Store action
-        if re.search(r"\b(save|store|insert|record|write)\b", lower_text):
+        # Save/Store/Update action
+        if re.search(r"\b(save|store|insert|record|write|update|create\s+(their\s+)?(team\s+record|dossier|order|entry|item))\b", lower_text):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.ACTION,
@@ -303,8 +322,30 @@ class RequirementTranslator:
                 )
             )
 
-        # Send/Notify action
-        if re.search(r"\b(send|notify|message|alert|email|whatsapp|team\s+knows)\b", lower_text):
+        # Lookup / inspect state action
+        if re.search(r"\b(check|verify|lookup|inspect|pull|match|query)\b", lower_text):
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Query state or inspect record in data store",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.LOW,
+                )
+            )
+
+        # Transform / validate / format / enrich / calculate action
+        if re.search(r"\b(validate|transform|format|enrich|assign|convert|code|calculate|compute|aggregate|parse|generate)\b", lower_text):
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Validate and format payload via transformation node",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.LOW,
+                )
+            )
+
+        # Send/Notify/Dispatch action
+        if re.search(r"\b(send|notify|message|alert|email|whatsapp|team\s+knows|push|call|dispatch|forward|post|page|publish|ping|respond)\b", lower_text):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.ACTION,
@@ -326,7 +367,7 @@ class RequirementTranslator:
             )
 
         # Check conditional routing
-        if re.search(r"\b(send\s+.*?to\s+sales\s+and\s+.*?to\s+support|if\s+the\s+payment\s+fails|if\s+they're\s+already)\b", lower_text):
+        if re.search(r"\b(send\s+.*?to\s+sales\s+and\s+.*?to\s+support|if\s+the\s+payment\s+fails|if\s+they're\s+already|if\b|otherwise|assess|triage|route\b|split\b|branch\b|match\b)\b", lower_text):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.ACTION,
@@ -415,7 +456,7 @@ class RequirementTranslator:
     def _extract_failure_handling(self, text: str, req: Requirement) -> None:
         """Extract error recovery and retry specifications."""
         lower_text = text.lower()
-        if re.search(r"\bretr(y|ies)\b", lower_text):
+        if re.search(r"\b(retr(y|ies)|timeout|times\s+out|occasional(ly)?\s+hangs|backoff|resilien\w+)\b", lower_text):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.FAILURE_HANDLING,
@@ -514,6 +555,20 @@ class RequirementTranslator:
                 )
             )
 
+        has_before_trigger = bool(re.search(r"\b\d+\s+(minutes?|hours?|days?)\s+before\s+(they\s+submit|the\s+form|submission|trigger|applying|they\s+apply)\b", lower_text))
+        if has_before_trigger:
+            conflict_msg = "Causal impossibility: Action cannot be scheduled before the triggering event occurs."
+            req.add_conflict(conflict_msg)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.TIMING,
+                    description="Impossible negative temporal latency (action before trigger)",
+                    confidence=ConfidenceLevel.CONFLICTING,
+                    risk=RiskLevel.MEDIUM,
+                    notes=conflict_msg,
+                )
+            )
+
     def _detect_ambiguities(self, text: str, req: Requirement) -> None:
         """Detect missing critical details, ambiguous targets, or untestable requests."""
         lower_text = text.lower()
@@ -549,11 +604,12 @@ class RequirementTranslator:
                     )
                 )
 
-        # Ambiguity 3: Database mentioned without target table
+        # Ambiguity 3: Database mentioned without target table (excluding backup and dump tasks)
         if re.search(r"\b(database|postgresql|postgres|mysql|sqlite)\b", lower_text):
-            if not re.search(r"\b(table\s+\w+|\w+_table|leads?|customers?|contacts?|users?|enquir(y|ies))\b", lower_text):
-                ambiguity = "Database destination table unspecified: Target table or schema name is not provided."
-                req.add_ambiguity(ambiguity)
+            if not re.search(r"\b(backup|dump|restore)\b", lower_text):
+                if not re.search(r"\b(table\s+\w+|\w+_table|leads?|customers?|contacts?|users?|enquir(y|ies)|ledger|dossier|accounts?)\b", lower_text):
+                    ambiguity = "Database destination table unspecified: Target table or schema name is not provided."
+                    req.add_ambiguity(ambiguity)
 
         # Ambiguity 4: Untestable vague quality terms
         if re.search(r"\b(make\s+it\s+(reliable|fast|robust|good)|handle\s+everything)\b", lower_text):
@@ -598,6 +654,48 @@ class RequirementTranslator:
                     description="Unspecified lead retention mechanism",
                     confidence=ConfidenceLevel.UNKNOWN,
                     risk=RiskLevel.LOW,
+                    notes=ambiguity,
+                )
+            )
+
+        # Ambiguity 8: Subjective or undefined financial/risk thresholds
+        if re.search(r"\b(normal\s+budget|standard\s+budget|good\s+customers?|attractive\s+discount|significant\s+risk|significant\s+liability|trustworthy|honest)\b", lower_text):
+            ambiguity = "Subjective or undefined threshold criteria: Specific numerical thresholds or explicit rule criteria are required."
+            req.add_ambiguity(ambiguity)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Unspecified criteria or undefined threshold",
+                    confidence=ConfidenceLevel.UNKNOWN,
+                    risk=RiskLevel.HIGH,
+                    notes=ambiguity,
+                )
+            )
+
+        # Ambiguity 9: SSRF targeting private or cloud metadata addresses
+        if re.search(r"\b(https?://)?(169\.254\.169\.254|localhost|127\.0\.0\.1|0\.0\.0\.0)\b", lower_text):
+            ambiguity = "Security violation (SSRF): Workflow requests target private loopback or cloud metadata address, which is strictly prohibited."
+            req.add_ambiguity(ambiguity)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.SECURITY_REQUIREMENT,
+                    description="SSRF target detected and blocked",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.CRITICAL,
+                    notes=ambiguity,
+                )
+            )
+
+        # Ambiguity 10: Autonomous high-value wire transfers without human approval
+        if re.search(r"\b(wire\s+transfer|bank\s+wire)\b", lower_text) and re.search(r"\b(without\s+(disturbing|approval|manager)|automatically\s+execute)\b", lower_text):
+            ambiguity = "Financial governance restriction: High-value wire transfers cannot be executed autonomously without human manager approval."
+            req.add_ambiguity(ambiguity)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.SECURITY_REQUIREMENT,
+                    description="Autonomous wire transfer blocked pending governance approval",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.CRITICAL,
                     notes=ambiguity,
                 )
             )
