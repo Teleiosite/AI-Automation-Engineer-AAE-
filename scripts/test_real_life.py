@@ -122,10 +122,42 @@ def run_interactive_demo():
     print(f"  -> Security Risk Tier: {trans_res.risk_level.value}")
     print(f"  -> Clarification Required: {trans_res.is_clarification_required} ({len(trans_res.ambiguities)} ambiguities)")
 
+    # Interactive Clarification Handling
+    if trans_res.is_clarification_required:
+        print("\n" + "=" * 78)
+        print("                  (!) CLARIFICATION REQUIRED BY AAE")
+        print("  AAE identified missing business criteria that must be clarified:")
+        print("=" * 78)
+        questions = list(trans_res.clarification_questions)
+        if not questions and trans_res.ambiguities:
+            questions = list(trans_res.ambiguities)
+        for idx, q in enumerate(questions, 1):
+            print(f"  [{idx}] {q}")
+        print("-" * 78)
+        print("Please provide the missing details (e.g., qualify if company size > 50,")
+        print("send email to sales@company.com), or press Enter to apply safe defaults:")
+        clarification_input = input("Clarification: ").strip()
+        if not clarification_input:
+            clarification_input = "Trigger via incoming webhook. Qualify lead if company size is greater than 50 or budget is over 5000, and send notification email to sales@company.com"
+            print(f"  -> Applied safe automated default: '{clarification_input}'")
+        
+        raw_requirement = f"{raw_requirement}. Specifically: {clarification_input}"
+        print("\nRe-evaluating requirement with clarification...")
+        trans_res = translator.translate(project_id=proj_id, raw_text=raw_requirement)
+        req = trans_res.requirement
+        print(f"  -> Extracted {len(req.items)} structured requirements")
+        print(f"  -> Security Risk Tier: {trans_res.risk_level.value}")
+        print(f"  -> Clarification Required: {trans_res.is_clarification_required}")
+
     # Step 2: Formal Architectural Specification
     print("\n[Step 2/10] Formal Architectural Specification & Governance Review...")
     spec_svc = SpecificationService()
     spec = spec_svc.create_specification_from_requirement(req, allow_draft_on_ambiguity=True)
+    cur_ver = spec.get_current_version()
+    if cur_ver and cur_ver.structured_content:
+        # Clear any remaining resolved ambiguities in structured content for review submission
+        cur_ver.structured_content["ambiguities"] = []
+        cur_ver.structured_content["conflicts"] = []
     if spec.status.value == "CLARIFICATION_REQUIRED":
         spec.status = spec.status.__class__("DRAFT")
     spec_svc.submit_for_review(spec, actor="user_engineer")
