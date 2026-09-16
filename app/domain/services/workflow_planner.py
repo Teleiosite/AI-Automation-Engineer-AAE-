@@ -183,7 +183,12 @@ class WorkflowPlanner:
                     name=f"Send Email ({es_name})",
                     node_type="n8n-nodes-base.emailSend",
                     type_version=2.1,
-                    parameters={"subject": "Enquiry Received", "to": "={{ $json.email }}"},
+                    parameters={
+                        "fromEmail": "leads@example.com",
+                        "toEmail": "={{ $json.body?.email || $json.email || 'lead@example.com' }}",
+                        "subject": "Enquiry Received",
+                        "text": "Thank you for submitting your enquiry.",
+                    },
                     retry_on_fail=True,
                     max_retries=3,
                 )
