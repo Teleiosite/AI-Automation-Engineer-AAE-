@@ -616,9 +616,9 @@ class RequirementTranslator:
             req.add_ambiguity("Vague non-functional requirement: Qualities like 'reliable' or 'fast' must be translated into measurable criteria.")
 
         # Ambiguity 5: Qualification without criteria
-        if re.search(r"\b(worth\s+sending|worthwhile|qualified\s+ones?|good\s+leads?|important\s+leads?)\b", lower_text):
+        if re.search(r"\b(worth\s+sending|worthwhile|qualified\s+(ones?|leads?)|good\s+leads?|important\s+leads?|qualif(y|ies)\s+leads?)\b", lower_text):
             if not re.search(r"\b(score|threshold|budget|company\s+size|revenue|greater|more\s+than|less\s+than|criteria)\b", lower_text):
-                ambiguity = "Lead qualification criteria unspecified: Define measurable rules to evaluate whether leads are qualified or worth sending."
+                ambiguity = "What makes a lead 'qualified' (e.g., budget threshold, company size > 50, or scoring rules)?"
                 req.add_ambiguity(ambiguity)
                 req.add_item(
                     RequirementItem(
@@ -630,19 +630,50 @@ class RequirementTranslator:
                     )
                 )
 
-        # Ambiguity 6: Delegation/assignment without recipient
-        if re.search(r"\b(right\s+person|appropriate\s+person|assign\s+qualified\s+ones\s+to\s+the\s+right\s+person)\b", lower_text):
-            ambiguity = "Lead assignment rule unspecified: How should qualified leads be assigned to team members (e.g., round-robin, by territory)?"
-            req.add_ambiguity(ambiguity)
-            req.add_item(
-                RequirementItem(
-                    type=RequirementType.ACTION,
-                    description="Unspecified lead assignment rule",
-                    confidence=ConfidenceLevel.UNKNOWN,
-                    risk=RiskLevel.LOW,
-                    notes=ambiguity,
+        # Ambiguity 6: Delegation/assignment without recipient or routing rules
+        if re.search(r"\b(right\s+person|appropriate\s+person|assign(s)?\s+(qualified\s+)?(leads?|ones?)\s+to\s+sales|assigned\s+representative)\b", lower_text):
+            if not re.search(r"\b(round-?robin|territor\w+|region\w+|rep\s+name|by\s+industry|specific\s+salesperson|rep@|sales@)\b", lower_text):
+                ambiguity = "How should qualified leads be assigned (e.g., round-robin, by territory, or to a specific email)?"
+                req.add_ambiguity(ambiguity)
+                req.add_item(
+                    RequirementItem(
+                        type=RequirementType.ACTION,
+                        description="Unspecified lead assignment rule",
+                        confidence=ConfidenceLevel.UNKNOWN,
+                        risk=RiskLevel.LOW,
+                        notes=ambiguity,
+                    )
                 )
-            )
+
+        # Ambiguity 6B: Fallback when no match occurs
+        if re.search(r"\b(assign(s)?\s+.*?\s+to\s+sales|assigned\s+representative)\b", lower_text):
+            if not re.search(r"\b(if\s+no\s+match|otherwise|fallback|default\s+rep|unassigned|if\s+not)\b", lower_text):
+                ambiguity = "What happens when no salesperson matches or the lead is not qualified?"
+                req.add_ambiguity(ambiguity)
+                req.add_item(
+                    RequirementItem(
+                        type=RequirementType.ACTION,
+                        description="Unspecified fallback for unmatched salesperson",
+                        confidence=ConfidenceLevel.UNKNOWN,
+                        risk=RiskLevel.LOW,
+                        notes=ambiguity,
+                    )
+                )
+
+        # Ambiguity 6C: Customer database store unspecified
+        if re.search(r"\b(customer\s+already\s+exists|creates?\s+the\s+customer)\b", lower_text):
+            if not re.search(r"\b(postgres|postgresql|database|crm|sheets?|airtable|table|hubspot|salesforce)\b", lower_text):
+                ambiguity = "Where should customer records be checked and created (e.g., PostgreSQL table, CRM, Google Sheets)?"
+                req.add_ambiguity(ambiguity)
+                req.add_item(
+                    RequirementItem(
+                        type=RequirementType.DATA_SOURCE,
+                        description="Unspecified customer data store",
+                        confidence=ConfidenceLevel.UNKNOWN,
+                        risk=RiskLevel.LOW,
+                        notes=ambiguity,
+                    )
+                )
 
         # Ambiguity 7: Unspecified lead retention/SLA
         if re.search(r"\b(don't\s+get\s+forgotten|not\s+get\s+forgotten)\b", lower_text):
