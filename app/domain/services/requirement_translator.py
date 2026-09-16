@@ -93,6 +93,12 @@ class RequirementTranslator:
         (re.compile(r"\b(when|whenever)\s+(someone|somebody|a\s+user|a\s+customer)\s+submits?\b", re.IGNORECASE), "User form submission"),
         (re.compile(r"\b(email\s+received|incoming\s+email|when\s+email\s+arrives)\b", re.IGNORECASE), "Incoming email trigger"),
         (re.compile(r"\b(incoming\s+message|when\s+whatsapp\s+received)\b", re.IGNORECASE), "Incoming message trigger"),
+        (re.compile(r"\b(enquir(y|ies)|contact(s)?\s+us|sends?\s+(us\s+)?an?\s+enquiry|when\s+somebody\s+enquires)\b", re.IGNORECASE), "Website contact enquiry"),
+        (re.compile(r"\b(books?\s+(an?\s+)?appointment|appointment\s+booking|new\s+appointment|reservation)\b", re.IGNORECASE), "Appointment booking event"),
+        (re.compile(r"\b(invoice|payment)\s+changes?\s+status|status\s+changes?\b", re.IGNORECASE), "Invoice status change event"),
+        (re.compile(r"\b(sends?\s+(the\s+)?(same\s+)?event|event\s+(arrives|received|occurs)|incoming\s+event|customer\s+action)\b", re.IGNORECASE), "System customer event"),
+        (re.compile(r"\b(external\s+service|service\s+doesn't\s+respond)\b", re.IGNORECASE), "External service event"),
+        (re.compile(r"\bprocess\s+customer\s+information\b", re.IGNORECASE), "Customer data processing event"),
     ]
 
     # Data stores
@@ -105,6 +111,7 @@ class RequirementTranslator:
         (re.compile(r"\b(google\s+sheets?|sheets?)\b", re.IGNORECASE), "Google Sheets"),
         (re.compile(r"\b(airtable)\b", re.IGNORECASE), "Airtable"),
         (re.compile(r"\b(database|data\s+table)\b", re.IGNORECASE), "Database"),
+        (re.compile(r"\b(customer\s+records?|record\s+it|save\s+(their\s+)?details|update\s+(the\s+)?customer\s+record)\b", re.IGNORECASE), "Customer Records Store"),
     ]
 
     # External services
@@ -118,6 +125,11 @@ class RequirementTranslator:
         (re.compile(r"\b(hubspot)\b", re.IGNORECASE), "HubSpot"),
         (re.compile(r"\b(salesforce)\b", re.IGNORECASE), "Salesforce"),
         (re.compile(r"\b(rest\s+api|external\s+api|api)\b", re.IGNORECASE), "REST API"),
+        (re.compile(r"\b(notify\s+sales|send\s+.*?to\s+sales|sales\s+team)\b", re.IGNORECASE), "Sales Team Channel"),
+        (re.compile(r"\b(support\s+team|to\s+support|helpdesk)\b", re.IGNORECASE), "Support Team Channel"),
+        (re.compile(r"\b(alert\s+(the\s+)?finance\s+team|finance\s+team)\b", re.IGNORECASE), "Finance Alert Channel"),
+        (re.compile(r"\b(team\s+knows|let\s+us\s+know|notify\s+(the\s+)?team|alert\s+(the\s+)?team)\b", re.IGNORECASE), "Team Notification Channel"),
+        (re.compile(r"\b(reminder\s+before|send\s+.*?reminder)\b", re.IGNORECASE), "Appointment Reminder Service"),
     ]
 
     def translate(self, project_id: UUID, raw_text: str, created_by: str = "user") -> RequirementTranslationResult:
@@ -225,6 +237,9 @@ class RequirementTranslator:
             if pattern.search(text):
                 found_triggers.append(desc)
 
+        if not found_triggers and re.search(r"^(when|whenever|if)\b", text.strip(), re.IGNORECASE):
+            found_triggers.append("Inbound event trigger")
+
         if found_triggers:
             for trigger_desc in sorted(set(found_triggers)):
                 req.add_item(
@@ -289,13 +304,35 @@ class RequirementTranslator:
             )
 
         # Send/Notify action
-        if re.search(r"\b(send|notify|message|alert|email|whatsapp)\b", lower_text):
+        if re.search(r"\b(send|notify|message|alert|email|whatsapp|team\s+knows)\b", lower_text):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.ACTION,
                     description="Dispatch outbound notification/message",
                     confidence=ConfidenceLevel.EXPLICIT,
                     risk=RiskLevel.MEDIUM,
+                )
+            )
+
+        # Check deduplication / idempotency
+        if re.search(r"\b(don't\s+create\s+another|already\s+there|isn't\s+processed\s+twice|same\s+customer\s+action\s+isn't\s+processed\s+twice|deduplicat\w+)\b", lower_text):
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Deduplicate incoming event and enforce idempotency guard",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.LOW,
+                )
+            )
+
+        # Check conditional routing
+        if re.search(r"\b(send\s+.*?to\s+sales\s+and\s+.*?to\s+support|if\s+the\s+payment\s+fails|if\s+they're\s+already)\b", lower_text):
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Conditional evaluation and routing branch",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.LOW,
                 )
             )
 
@@ -393,7 +430,17 @@ class RequirementTranslator:
     def _extract_security(self, text: str, req: Requirement) -> None:
         """Extract security, credential, and compliance requirements."""
         lower_text = text.lower()
-        if any(w in lower_text for w in ["phone", "email", "customer", "lead", "details"]):
+        if re.search(r"\b(sensitive\s+information|authori[sz]ed\s+to\s+see|confidential|restricted\s+access)\b", lower_text):
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.SECURITY_REQUIREMENT,
+                    description="Enforce access control and PII data sanitization for sensitive information",
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.CRITICAL,
+                    notes="Sensitive data must only be accessible to authorized roles and redacted from general logs.",
+                )
+            )
+        elif any(w in lower_text for w in ["phone", "email", "customer", "lead", "details"]):
             req.add_item(
                 RequirementItem(
                     type=RequirementType.SECURITY_REQUIREMENT,
@@ -511,6 +558,49 @@ class RequirementTranslator:
         # Ambiguity 4: Untestable vague quality terms
         if re.search(r"\b(make\s+it\s+(reliable|fast|robust|good)|handle\s+everything)\b", lower_text):
             req.add_ambiguity("Vague non-functional requirement: Qualities like 'reliable' or 'fast' must be translated into measurable criteria.")
+
+        # Ambiguity 5: Qualification without criteria
+        if re.search(r"\b(worth\s+sending|worthwhile|qualified\s+ones?|good\s+leads?|important\s+leads?)\b", lower_text):
+            if not re.search(r"\b(score|threshold|budget|company\s+size|revenue|greater|more\s+than|less\s+than|criteria)\b", lower_text):
+                ambiguity = "Lead qualification criteria unspecified: Define measurable rules to evaluate whether leads are qualified or worth sending."
+                req.add_ambiguity(ambiguity)
+                req.add_item(
+                    RequirementItem(
+                        type=RequirementType.ACTION,
+                        description="Unspecified lead qualification criteria",
+                        confidence=ConfidenceLevel.UNKNOWN,
+                        risk=RiskLevel.LOW,
+                        notes=ambiguity,
+                    )
+                )
+
+        # Ambiguity 6: Delegation/assignment without recipient
+        if re.search(r"\b(right\s+person|appropriate\s+person|assign\s+qualified\s+ones\s+to\s+the\s+right\s+person)\b", lower_text):
+            ambiguity = "Lead assignment rule unspecified: How should qualified leads be assigned to team members (e.g., round-robin, by territory)?"
+            req.add_ambiguity(ambiguity)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Unspecified lead assignment rule",
+                    confidence=ConfidenceLevel.UNKNOWN,
+                    risk=RiskLevel.LOW,
+                    notes=ambiguity,
+                )
+            )
+
+        # Ambiguity 7: Unspecified lead retention/SLA
+        if re.search(r"\b(don't\s+get\s+forgotten|not\s+get\s+forgotten)\b", lower_text):
+            ambiguity = "Lead retention mechanism unspecified: What SLA or action ensures important leads are not forgotten?"
+            req.add_ambiguity(ambiguity)
+            req.add_item(
+                RequirementItem(
+                    type=RequirementType.ACTION,
+                    description="Unspecified lead retention mechanism",
+                    confidence=ConfidenceLevel.UNKNOWN,
+                    risk=RiskLevel.LOW,
+                    notes=ambiguity,
+                )
+            )
 
     def _generate_clarification_questions(self, req: Requirement) -> List[str]:
         """Produce clear, focused questions for each unresolved ambiguity or conflict."""
