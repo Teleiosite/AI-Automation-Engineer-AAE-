@@ -133,6 +133,9 @@ class WorkflowPlanner:
 
         prev_node_id: Optional[str] = None
 
+        source_req_text = (content.get("source_request", {}).get("text", "") + " " + content.get("business_objective", "")).lower()
+        needs_response_node = any(kw in source_req_text for kw in ["respond", "response", "reply", "return json", "confirmation json"])
+
         # 3.1 Trigger node
         trigger_desc = content.get("trigger", "").lower()
         if "schedule" in trigger_desc or "cron" in trigger_desc or "monday" in trigger_desc:
@@ -144,12 +147,13 @@ class WorkflowPlanner:
                 parameters={"rule": {"interval": [{"field": "cronExpression", "expression": "0 8 * * 1"}]}},
             )
         else:
+            resp_mode = "responseNode" if needs_response_node else "onReceived"
             trigger_node = PlannedNode(
                 node_id="node_trigger",
                 name="Webhook Trigger",
                 node_type="n8n-nodes-base.webhook",
                 type_version=2.0,
-                parameters={"path": "lead", "httpMethod": "POST", "responseMode": "onReceived"},
+                parameters={"path": "lead", "httpMethod": "POST", "responseMode": resp_mode},
             )
         nodes.append(trigger_node)
         prev_node_id = trigger_node.node_id
@@ -206,6 +210,42 @@ class WorkflowPlanner:
             connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
             prev_node_id = node_id
             planned_actions.append(f"Dispatch outbound message via {es_name}")
+
+        # 3.4 Data transformation / Code validation actions
+        if any(kw in source_req_text for kw in ["code", "validate", "transform", "javascript", "script"]):
+            node_id = f"node_code_{len(nodes)}"
+            code_node = PlannedNode(
+                node_id=node_id,
+                name="Validate & Format (Code)",
+                node_type="n8n-nodes-base.code",
+                type_version=2.0,
+                parameters={
+                    "mode": "runOnceForEachItem",
+                    "jsCode": "const item = $json.body || $json;\nreturn {\n  ...item,\n  qualified: Boolean(item.email || item.name),\n  processedAt: new Date().toISOString()\n};",
+                },
+            )
+            nodes.append(code_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
+            prev_node_id = node_id
+            planned_actions.append("Validate and format lead payload via JavaScript Code node")
+
+        # 3.5 Respond to Webhook action
+        if needs_response_node:
+            node_id = f"node_respond_{len(nodes)}"
+            respond_node = PlannedNode(
+                node_id=node_id,
+                name="Respond to Webhook",
+                node_type="n8n-nodes-base.respondToWebhook",
+                type_version=1.1,
+                parameters={
+                    "respondWith": "json",
+                    "responseBody": "={\n  \"status\": \"success\",\n  \"message\": \"Lead received and validated successfully\",\n  \"data\": $json\n}",
+                },
+            )
+            nodes.append(respond_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node_id))
+            prev_node_id = node_id
+            planned_actions.append("Respond to incoming webhook with confirmation JSON")
 
         # 3.4 Destructive actions check
         has_destructive = any(
