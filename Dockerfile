@@ -46,9 +46,8 @@ COPY --from=builder /opt/venv /opt/venv
 RUN groupadd -g 10001 aae && \
     useradd -u 10001 -g aae -s /bin/false -m aae
 
-# Copy application source code
+# Copy application source code (includes app/db/migrations configured in alembic.ini)
 COPY --chown=aae:aae app/ ./app/
-COPY --chown=aae:aae alembic/ ./alembic/
 COPY --chown=aae:aae alembic.ini .
 COPY --chown=aae:aae pyproject.toml .
 
