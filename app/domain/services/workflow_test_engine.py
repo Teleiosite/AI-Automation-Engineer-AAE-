@@ -291,10 +291,36 @@ class WorkflowTestEngine:
             elif "email" in ntype:
                 # Simulated email delivery
                 current_data["email_sent"] = True
+                current_data["outbound_notification"] = True
                 current_data["recipient"] = params.get("toEmail", current_data.get("email", "test@domain.com"))
+            elif cname == "Validate Lifecycle Transition":
+                contract = params.get("contract", {})
+                transition_valid = any(
+                    transition.get("from") == current_data.get("state")
+                    and transition.get("to") == current_data.get("next_state")
+                    for transition in contract.get("transitions", [])
+                )
+                current_data["transition_validated"] = transition_valid
+            elif cname == "Extract Structured Document Fields":
+                contract = params.get("contract", {})
+                current_data["document_extracted"] = all(field in current_data for field in contract.get("required_fields", []))
+            elif cname == "Evaluate Decision Matrix":
+                contract = params.get("contract", {})
+                weights = contract.get("weights", [])
+                current_data["evaluation_completed"] = len(weights) >= 2
+            elif cname == "Append Immutable Audit Ledger":
+                contract = params.get("contract", {})
+                current_data["audit_ledger_appended"] = bool(contract.get("hash_chain") and contract.get("append_only"))
+            elif cname == "Monitor SLA Deadline":
+                current_data["sla_monitoring_scheduled"] = bool(params.get("contract", {}).get("deadline"))
+            elif cname == "Return Grounded Query Result":
+                current_data["grounded_query_response"] = bool(params.get("contract", {}).get("grounding_source"))
+            elif "wait" in ntype.lower():
+                current_data["human_approval_recorded"] = True
             elif "httprequest" in ntype.lower():
                 # Simulated HTTP request response
                 current_data["http_status"] = 200
+                current_data["outbound_notification"] = True
                 current_data["response_body"] = {"status": "ok"}
 
             # Move to next connected node
@@ -386,6 +412,22 @@ class WorkflowTestEngine:
         for inp in content.get("inputs", []):
             inputs[str(inp)] = f"sample-{inp}"
 
+        # Populate only contract-defined fixture values; this makes semantic
+        # scenarios exercise transition, extraction, and evaluation assertions.
+        for semantic_requirement in content.get("semantic_requirements", []):
+            contract = semantic_requirement.get("contract", {})
+            if semantic_requirement.get("type") == "STATE_MACHINE":
+                transitions = contract.get("transitions", [])
+                if transitions:
+                    inputs["state"] = transitions[0]["from"]
+                    inputs["next_state"] = transitions[0]["to"]
+            elif semantic_requirement.get("type") == "DOCUMENT_EXTRACTION":
+                for field in contract.get("required_fields", []):
+                    inputs.setdefault(field, f"sample-{field}")
+            elif semantic_requirement.get("type") == "EVALUATION_CRITERIA":
+                for criterion in contract.get("weights", []):
+                    inputs.setdefault(criterion["criterion"], 1)
+
         expected = {}
         for out in content.get("outputs", []):
             out_lower = str(out).lower()
@@ -393,6 +435,25 @@ class WorkflowTestEngine:
                 expected["email_sent"] = True
             elif "database" in out_lower or "record" in out_lower:
                 expected["db_synced"] = True
+            elif "outbound notification" in out_lower:
+                expected["outbound_notification"] = True
+            elif "human approval" in out_lower:
+                expected["human_approval_recorded"] = True
+            elif "lifecycle transition" in out_lower:
+                expected["transition_validated"] = True
+            elif "document fields" in out_lower:
+                expected["document_extracted"] = True
+            elif "weighted evaluation" in out_lower:
+                expected["evaluation_completed"] = True
+            elif "audit ledger" in out_lower:
+                expected["audit_ledger_appended"] = True
+            elif "sla monitoring" in out_lower:
+                expected["sla_monitoring_scheduled"] = True
+            elif "grounded query" in out_lower:
+                expected["grounded_query_response"] = True
+
+        if not expected:
+            raise ValueError("Specification has no verifiable output contract; refusing to generate vacuous scenarios.")
 
         scenarios.append(
             TestScenario(

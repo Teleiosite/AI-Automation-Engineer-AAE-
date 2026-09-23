@@ -81,7 +81,8 @@ class RequirementTranslator:
 
     # Financial operation keywords
     FINANCIAL_KEYWORDS = [
-        "payment", "charge", "refund", "invoice", "stripe", "credit card", "bank", "payout"
+        "payment", "charge", "refund", "invoice", "stripe", "credit card", "bank", "payout",
+        "price", "cost", "fee", "discount", "spend", "budget", "purchase order"
     ]
 
     # Common triggers
@@ -181,7 +182,8 @@ class RequirementTranslator:
         # 9. Extract security requirements
         self._extract_security(cleaned_text, requirement)
 
-        # 10. Extract success criteria
+        # 10. Extract first-class enterprise semantics and success criteria
+        self._extract_enterprise_semantics(cleaned_text, requirement)
         self._extract_success_criteria(cleaned_text, requirement)
 
         # 11. Detect conflicts / contradictions
@@ -335,6 +337,40 @@ class RequirementTranslator:
                     risk=RiskLevel.LOW,
                 )
             )
+
+    def _extract_enterprise_semantics(self, text: str, req: Requirement) -> None:
+        """Preserve enterprise concepts that cannot safely be reduced to generic actions."""
+        lower_text = text.lower()
+        concepts = (
+            (RequirementType.STATE_MACHINE, r"\b(state machine|lifecycle|state transition|status transition)\b", "Lifecycle state machine and transition invariants"),
+            (RequirementType.APPROVAL_POLICY, r"\b(approval|approver|sign-off|spend threshold|authority matrix)\b", "Human approval policy with scope, authority, and re-approval controls"),
+            (RequirementType.DOCUMENT_EXTRACTION, r"\b(pdf|spreadsheet|excel|quotation|quote ingestion|document parsing)\b", "Document ingestion and semi-structured data extraction contract"),
+            (RequirementType.EVALUATION_CRITERIA, r"\b(compar\w*|evaluation|criteria|trade-off|cheapest)\b", "Multi-criteria evaluation and decision rationale"),
+            (RequirementType.AUDIT_REQUIREMENT, r"\b(immutable audit|audit trail|audit ledger|cryptographic|approver id)\b", "Immutable audit trail for governed decisions"),
+            (RequirementType.SLA_POLICY, r"\b(sla|stale|delay detection|timeout|follow-up|escalation)\b", "SLA monitoring, follow-up, and escalation policy"),
+            (RequirementType.CONVERSATIONAL_INTERFACE, r"\b(conversational|ask why|find out why|query interface)\b", "Conversational query interface grounded in workflow records"),
+        )
+        for item_type, pattern, description in concepts:
+            if re.search(pattern, lower_text):
+                req.add_item(RequirementItem(
+                    type=item_type,
+                    description=description,
+                    confidence=ConfidenceLevel.EXPLICIT,
+                    risk=RiskLevel.HIGH if item_type == RequirementType.APPROVAL_POLICY else RiskLevel.MEDIUM,
+                ))
+
+        # Fail closed when a high-impact semantic feature is requested without
+        # the minimum contract needed to compile it safely.
+        required_contracts = (
+            (r"\b(state machine|lifecycle)\b", r"\b(initial state|transition|states?\s*:)\b", "Lifecycle contract incomplete: provide the initial state and allowed transitions."),
+            (r"\b(approval|spend threshold|authority matrix)\b", r"\b(\$|threshold|approver|manager|director|role)\b", "Approval contract incomplete: provide approver roles and monetary thresholds."),
+            (r"\b(pdf|spreadsheet|excel|quotation)\b", r"\b(field|schema|quantity|price|supplier|extract)\b", "Document extraction contract incomplete: provide required fields and missing-data handling."),
+            (r"\b(compare|comparison|evaluation|trade-off)\b", r"\b(criteria|weight|price|quality|delivery|score)\b", "Evaluation contract incomplete: provide criteria and decision weights or priority order."),
+            (r"\b(sla|stale|delay detection|escalation)\b", r"\b(\d+\s*(minute|hour|day)|timeout|within)\b", "SLA contract incomplete: provide monitoring deadlines and escalation recipients."),
+        )
+        for requested, complete, ambiguity in required_contracts:
+            if re.search(requested, lower_text) and not re.search(complete, lower_text):
+                req.add_ambiguity(ambiguity)
 
     def _extract_inputs(self, text: str, req: Requirement) -> None:
         """Extract data inputs required for the workflow."""
@@ -517,6 +553,7 @@ class RequirementTranslator:
     def _detect_ambiguities(self, text: str, req: Requirement) -> None:
         """Detect missing critical details, ambiguous targets, or untestable requests."""
         lower_text = text.lower()
+        self._detect_enterprise_ambiguities(lower_text, req)
 
         # Ambiguity 1: Destructive action without specific retention/criteria
         if any(k in lower_text for k in ["remove customer", "delete customer", "delete record", "clean up old", "cleanup"]):
@@ -601,6 +638,18 @@ class RequirementTranslator:
                     notes=ambiguity,
                 )
             )
+
+    def _detect_enterprise_ambiguities(self, lower_text: str, req: Requirement) -> None:
+        """Identify domain-critical unspecified controls rather than claiming completeness."""
+        checks = (
+            (r"\b(procurement|supplier|rfq|purchase order)\b", r"\b(approved supplier|supplier catalog)\b", "Procurement supplier policy unspecified: identify the approved supplier catalog and RFQ recipients."),
+            (r"\b(procurement|spend threshold|approval)\b", r"\b(approver|director|manager|threshold|authority matrix)\b", "Approval authority policy unspecified: define approvers and monetary thresholds."),
+            (r"\b(pdf|spreadsheet|excel|quotation)\b", r"\b(schema|field mapping|extract.*(?:field|price|quantity))\b", "Document extraction contract unspecified: define required fields and handling for missing values."),
+            (r"\b(state machine|lifecycle|state transition)\b", r"\b(initial state|allowed transition|transition rule)\b", "Lifecycle invariants unspecified: define initial state and allowed transitions."),
+        )
+        for relevant, sufficient, message in checks:
+            if re.search(relevant, lower_text) and not re.search(sufficient, lower_text):
+                req.add_ambiguity(message)
 
     def _generate_clarification_questions(self, req: Requirement) -> List[str]:
         """Produce clear, focused questions for each unresolved ambiguity or conflict."""
