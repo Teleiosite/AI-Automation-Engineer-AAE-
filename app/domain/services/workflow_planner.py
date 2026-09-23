@@ -6,6 +6,7 @@ and testable Workflow Plan with concrete node topologies and retry policies.
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import UUID, uuid4
 
@@ -210,7 +211,69 @@ class WorkflowPlanner:
             prev_node_id = sanitize_node.node_id
             planned_actions.append("Enforce access control and PII data sanitization for sensitive information")
 
-        # 3.4 Conditional Branching / Routing Actions
+        # 3.4 Independent human governance gate.  This is deliberately not tied
+        # to a sales/AI-agent branch: any approval policy must gate downstream work.
+        requires_approval = any(
+            "approval" in act.get("description", "").lower()
+            for act in content.get("actions", [])
+        ) or any(
+            item.get("type") == "APPROVAL_POLICY"
+            for item in content.get("semantic_requirements", [])
+        ) or any(keyword in source_req_text for keyword in ("approval", "approver", "sign-off", "spend threshold"))
+        if requires_approval:
+            approval_node = PlannedNode(
+                node_id=f"node_approval_{len(nodes)}",
+                name="Human Approval Gate",
+                node_type="n8n-nodes-base.wait",
+                type_version=1.1,
+                parameters={"resume": "webhook", "options": {"approvalRequired": True}},
+                notes="No downstream commercial action may run until an authorized approval is recorded.",
+            )
+            nodes.append(approval_node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=approval_node.node_id))
+            prev_node_id = approval_node.node_id
+            planned_actions.append("Require human approval before downstream governed actions")
+
+        # 3.5 Compile each approved semantic contract into a distinct subgraph.
+        # These nodes carry deterministic contract data and are intentionally
+        # separate from generic routing so coverage is visible to validation.
+        def contract_code(contract: Dict[str, Any], body: str) -> Dict[str, Any]:
+            return {"mode": "runOnceForEachItem", "contract": contract, "jsCode": f"const contract = {json.dumps(contract)};\nconst item = $json;\n{body}"}
+
+        for semantic_requirement in content.get("semantic_requirements", []):
+            semantic_type = semantic_requirement.get("type")
+            contract = semantic_requirement.get("contract", {})
+            if semantic_type == "STATE_MACHINE":
+                name, node_type, parameters = ("Validate Lifecycle Transition", "n8n-nodes-base.code", contract_code(contract, "if (!item.state || !item.next_state) throw new Error('Missing lifecycle transition'); const allowed = contract.transitions.some(t => t.from === item.state && t.to === item.next_state); if (contract.transitions.length && !allowed) throw new Error('Prohibited lifecycle transition'); return { ...item, transition_validated: true };"))
+            elif semantic_type == "DOCUMENT_EXTRACTION":
+                name, node_type, parameters = ("Extract Structured Document Fields", "n8n-nodes-base.code", contract_code(contract, "const missing = contract.required_fields.filter(field => item[field] == null); if (missing.length) throw new Error(`Missing document fields: ${missing.join(', ')}`); return { ...item, document_extracted: true };"))
+            elif semantic_type == "EVALUATION_CRITERIA":
+                name, node_type, parameters = ("Evaluate Decision Matrix", "n8n-nodes-base.code", contract_code(contract, "if (!contract.weights.length) throw new Error('Evaluation weights are required'); const score = contract.weights.reduce((total, criterion) => total + Number(item[criterion.criterion] || 0) * criterion.weight, 0); return { ...item, evaluation_score: score, evaluation_completed: true };"))
+            elif semantic_type == "AUDIT_REQUIREMENT":
+                name, node_type, parameters = ("Append Immutable Audit Ledger", "n8n-nodes-base.postgres", {"operation": "insert", "table": "immutable_audit_ledger", "contract": contract})
+            elif semantic_type == "SLA_POLICY":
+                deadline = contract.get("deadline") or {}
+                name, node_type, parameters = ("Monitor SLA Deadline", "n8n-nodes-base.wait", {"resume": "timeInterval", "amount": deadline.get("value", 1), "unit": deadline.get("unit", "hours"), "contract": contract})
+            elif semantic_type == "CONVERSATIONAL_INTERFACE":
+                name, node_type, parameters = ("Return Grounded Query Result", "n8n-nodes-base.respondToWebhook", {"respondWith": "json", "responseBody": "={{ $json }}", "contract": contract})
+            else:
+                continue
+            node = PlannedNode(
+                node_id=f"node_semantic_{len(nodes)}",
+                name=name,
+                node_type=node_type,
+                type_version=2.0 if node_type.endswith(".code") else 1.1,
+                parameters=parameters,
+                retry_on_fail=node_type in ("n8n-nodes-base.postgres",),
+                max_retries=3 if node_type == "n8n-nodes-base.postgres" else 0,
+                notes=semantic_requirement.get("description"),
+            )
+            nodes.append(node)
+            connections.append(PlannedConnection(source_node=prev_node_id, target_node=node.node_id))
+            prev_node_id = node.node_id
+            planned_actions.append(f"Compile semantic contract: {semantic_type}")
+
+        # 3.6 Conditional Branching / Routing Actions
         has_sales_support = "sales" in source_req_text and "support" in source_req_text
         has_payment_status = ("invoice" in source_req_text or "payment" in source_req_text) and ("failed" in source_req_text or "fails" in source_req_text)
 

@@ -695,8 +695,10 @@ class WorkflowValidator:
                     )
                 )
 
-            # Check external systems coverage
-            ext_systems = content.get("external_systems", [])
+            # Check integration coverage directly against the specification, not merely the plan.
+            ext_systems = list(content.get("external_systems", []))
+            ext_systems.extend(item.get("name", item) if isinstance(item, dict) else item for item in content.get("data_stores", []))
+            ext_systems.extend(item.get("name", item) if isinstance(item, dict) else item for item in content.get("external_services", []))
             for ext in ext_systems:
                 ext_lower = str(ext).lower()
                 if "postgres" in ext_lower or "database" in ext_lower:
@@ -719,6 +721,49 @@ class WorkflowValidator:
                                 message=f"Specification requires email integration ('{ext}'), but workflow lacks email node.",
                             )
                         )
+
+        if specification:
+            # Validate concrete compiler subgraphs, not generic node categories.
+            # A webhook or arbitrary Code node must not satisfy an unrelated contract.
+            semantic_node_rules = {
+                "STATE_MACHINE": ("SEM-006", "Validate Lifecycle Transition", "state transition enforcement"),
+                "APPROVAL_POLICY": ("SEM-007", "Human Approval Gate", "human approval gate"),
+                "DOCUMENT_EXTRACTION": ("SEM-008", "Extract Structured Document Fields", "document extraction"),
+                "EVALUATION_CRITERIA": ("SEM-009", "Evaluate Decision Matrix", "multi-criteria evaluation"),
+                "AUDIT_REQUIREMENT": ("SEM-010", "Append Immutable Audit Ledger", "immutable audit recording"),
+                "SLA_POLICY": ("SEM-011", "Monitor SLA Deadline", "SLA monitoring or timer"),
+                "CONVERSATIONAL_INTERFACE": ("SEM-012", "Return Grounded Query Result", "conversational query interface"),
+            }
+            for semantic_requirement in content.get("semantic_requirements", []):
+                req_type = semantic_requirement.get("type", "")
+                rule = semantic_node_rules.get(req_type)
+                if not rule:
+                    continue
+                rule_id, expected_name, label = rule
+                if expected_name not in node_names:
+                    issues.append(ValidationIssue(
+                        rule_id=rule_id,
+                        category=ValidationCategory.REQUIREMENT_MAPPING,
+                        severity=ValidationSeverity.ERROR,
+                        message=f"Specification requires {label}, but workflow lacks compiler node '{expected_name}'.",
+                    ))
+                contract = semantic_requirement.get("contract", {})
+                contract_checks = {
+                    "STATE_MACHINE": bool(contract.get("states")) and bool(contract.get("transitions")),
+                    "APPROVAL_POLICY": bool(contract.get("tiers")),
+                    "DOCUMENT_EXTRACTION": bool(contract.get("formats")) and bool(contract.get("required_fields")),
+                    "EVALUATION_CRITERIA": len(contract.get("weights", [])) >= 2,
+                    "AUDIT_REQUIREMENT": bool(contract.get("hash_chain")) and bool(contract.get("append_only")),
+                    "SLA_POLICY": bool(contract.get("deadline")) and bool(contract.get("escalation_recipient")),
+                    "CONVERSATIONAL_INTERFACE": bool(contract.get("grounding_source")),
+                }
+                if not contract_checks.get(req_type, True):
+                    issues.append(ValidationIssue(
+                        rule_id=f"{rule_id}-CONTRACT",
+                        category=ValidationCategory.SEMANTIC,
+                        severity=ValidationSeverity.ERROR,
+                        message=f"Specification lacks a complete, reviewable contract for {label}.",
+                    ))
 
         if plan:
             # Check that planned nodes exist

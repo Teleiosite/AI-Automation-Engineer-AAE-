@@ -5,6 +5,7 @@ Specifications and enforces formal human approval before allowing workflow const
 """
 
 from datetime import datetime, timezone
+import re
 from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -296,6 +297,41 @@ class SpecificationService:
         timing = [item.description for item in requirement.items if item.type == RequirementType.TIMING]
         security_reqs = [item.description for item in requirement.items if item.type == RequirementType.SECURITY_REQUIREMENT]
         success_criteria = [item.description for item in requirement.items if item.type == RequirementType.SUCCESS_CRITERIA]
+        semantic_requirements = [
+            {
+                "type": item.type.value,
+                "description": item.description,
+                "confidence": item.confidence.value,
+                "risk": item.risk.value,
+                # Contracts contain only values explicitly present in the source
+                # request. Missing values remain empty and cannot be invented by
+                # the planner.
+                "contract": self._build_semantic_contract(item.type, requirement.original_request),
+            }
+            for item in requirement.items
+            if item.type in {
+                RequirementType.STATE_MACHINE, RequirementType.APPROVAL_POLICY,
+                RequirementType.DOCUMENT_EXTRACTION, RequirementType.EVALUATION_CRITERIA,
+                RequirementType.AUDIT_REQUIREMENT, RequirementType.SLA_POLICY,
+                RequirementType.CONVERSATIONAL_INTERFACE,
+            }
+        ]
+        outputs = ["validated trigger payload"]
+        if data_stores:
+            outputs.append("database record")
+        if external_services:
+            outputs.append("outbound notification")
+        if any(item["type"] == RequirementType.APPROVAL_POLICY.value for item in semantic_requirements):
+            outputs.append("recorded human approval")
+        semantic_outputs = {
+            RequirementType.STATE_MACHINE.value: "validated lifecycle transition",
+            RequirementType.DOCUMENT_EXTRACTION.value: "extracted document fields",
+            RequirementType.EVALUATION_CRITERIA.value: "completed weighted evaluation",
+            RequirementType.AUDIT_REQUIREMENT.value: "appended audit ledger entry",
+            RequirementType.SLA_POLICY.value: "scheduled SLA monitoring",
+            RequirementType.CONVERSATIONAL_INTERFACE.value: "grounded query response",
+        }
+        outputs.extend(semantic_outputs[item["type"]] for item in semantic_requirements if item["type"] in semantic_outputs)
         business_obj = next(
             (item.description for item in requirement.items if item.type == RequirementType.BUSINESS_OBJECTIVE),
             "Automate business process",
@@ -316,6 +352,8 @@ class SpecificationService:
             "timing": timing,
             "security_requirements": security_reqs,
             "success_criteria": success_criteria,
+            "outputs": outputs,
+            "semantic_requirements": semantic_requirements,
             "assumptions": list(requirement.assumptions),
             "ambiguities": list(requirement.ambiguities),
             "conflicts": list(requirement.conflicts),
@@ -324,3 +362,35 @@ class SpecificationService:
 
         content["content_hash"] = compute_state_hash(content)
         return content
+
+    def _build_semantic_contract(self, requirement_type: RequirementType, source: str) -> Dict[str, Any]:
+        """Create a typed contract from explicit source values without guessing.
+
+        Contracts are intentionally data-only so they can be reviewed and hashed
+        in the approved specification before the planner uses them.
+        """
+        text = source.lower()
+        if requirement_type == RequirementType.STATE_MACHINE:
+            states_match = re.search(r"(?:states?|lifecycle)\s*:\s*([^.;]+)", source, re.IGNORECASE)
+            transition_matches = re.findall(r"([A-Za-z][\w -]+)\s*->\s*([A-Za-z][\w -]+)", source)
+            states = [value.strip() for value in states_match.group(1).split(",")] if states_match else []
+            return {"states": states, "transitions": [{"from": a.strip(), "to": b.strip()} for a, b in transition_matches], "fail_closed": True}
+        if requirement_type == RequirementType.APPROVAL_POLICY:
+            tiers = [{"threshold": amount.replace(",", ""), "role": role.strip()} for amount, role in re.findall(r"(\$[\d,]+)\s*(?:or below|and above|\+)?\s*[:=-]\s*([A-Za-z][A-Za-z _-]+)", source)]
+            return {"tiers": tiers, "reapproval_on_material_change": "re-approval" in text or "reapproval" in text, "fail_closed": True}
+        if requirement_type == RequirementType.DOCUMENT_EXTRACTION:
+            formats = [name for name in ("pdf", "excel", "spreadsheet", "email") if name in text]
+            fields_match = re.search(r"(?:extract(?:ion)?\s+fields?|fields?)\s*:\s*([^.;]+)", source, re.IGNORECASE)
+            fields = [value.strip() for value in fields_match.group(1).split(",")] if fields_match else []
+            return {"formats": formats, "required_fields": fields, "on_missing": "clarify" if "clarif" in text else None, "fail_closed": True}
+        if requirement_type == RequirementType.EVALUATION_CRITERIA:
+            weights = [{"criterion": criterion.lower(), "weight": int(weight)} for criterion, weight in re.findall(r"([A-Za-z][A-Za-z _-]+?)\s*(?:=|:|\()\s*(\d{1,3})%", source)]
+            return {"weights": weights, "requires_rationale": "rationale" in text or "reason" in text, "fail_closed": True}
+        if requirement_type == RequirementType.AUDIT_REQUIREMENT:
+            return {"hash_chain": "cryptographic" in text or "hash" in text, "append_only": "immutable" in text or "append-only" in text, "fail_closed": True}
+        if requirement_type == RequirementType.SLA_POLICY:
+            deadline = re.search(r"(\d+)\s*(minutes?|hours?|days?)", text)
+            return {"deadline": {"value": int(deadline.group(1)), "unit": deadline.group(2)} if deadline else None, "escalation_recipient": "manager" if "manager" in text else None, "fail_closed": True}
+        if requirement_type == RequirementType.CONVERSATIONAL_INTERFACE:
+            return {"grounding_source": "workflow records" if "record" in text else None, "fail_closed": True}
+        return {"fail_closed": True}
